@@ -822,10 +822,15 @@ void MyFrame::OnSENCEvtThread(OCPN_BUILDSENC_ThreadEvent &event) {
       }
 
       ReloadAllVP();
+      if (g_SencThreadManager)
+        g_SencThreadManager->ReleaseCompletedTicket(event.m_ticket);
       delete event.m_ticket;
       break;
     case SENC_BUILD_DONE_ERROR:
-      // printf("Myframe SENC build done ERROR\n");
+      wxLogDebug("SENC build done: SENC_BUILD_DONE_ERROR");
+      if (g_SencThreadManager)
+        g_SencThreadManager->ReleaseCompletedTicket(event.m_ticket);
+      delete event.m_ticket;
       break;
     default:
       break;
@@ -1699,10 +1704,6 @@ void MyFrame::OnCloseWindow(wxCloseEvent &event) {
     g_pAISTargetList->Destroy();
   }
 
-#ifndef __WXQT__
-  SetStatusBar(NULL);
-#endif
-
   if (RouteManagerDialog::getInstanceFlag()) {
     if (pRouteManagerDialog) {
       pRouteManagerDialog->Destroy();
@@ -2336,9 +2337,29 @@ void MyFrame::RefreshGroupIndices() {
   }
 }
 
-void MyFrame::OnToolLeftClick(wxCommandEvent &event) {
-  if (g_MainToolbar) g_MainToolbar->HideTooltip();
+bool MyFrame::DisableTbarTooltips() {
+  if (g_MainToolbar) {
+    g_MainToolbar->HideTooltip();
+    return g_MainToolbar->DisableTooltips();
+  }
+  wxLogWarning("Global g_MainToolbar has not been created.");
+  return false;
+}
 
+void MyFrame::EnableTbarTooltips() {
+  if (g_MainToolbar) {
+    g_MainToolbar->EnableTooltips();
+  }
+}
+
+void MyFrame::HideTbarTooltip() {
+  if (g_MainToolbar) {
+    g_MainToolbar->HideTooltip();
+  }
+}
+
+void MyFrame::OnToolLeftClick(wxCommandEvent &event) {
+  HideTbarTooltip();
   switch (event.GetId()) {
     case ID_MENU_SCALE_OUT:
       DoStackDelta(GetPrimaryCanvas(), 1);
@@ -2494,7 +2515,7 @@ void MyFrame::OnToolLeftClick(wxCommandEvent &event) {
 
     case wxID_PREFERENCES:
     case ID_SETTINGS: {
-      g_MainToolbar->HideTooltip();
+      HideTbarTooltip();
       DoSettings();
       break;
     }
@@ -2519,7 +2540,7 @@ void MyFrame::OnToolLeftClick(wxCommandEvent &event) {
     case ID_MENU_SETTINGS_BASIC: {
 #ifdef __ANDROID__
       androidDisableFullScreen();
-      g_MainToolbar->HideTooltip();
+      HideTbarTooltip();
       DoAndroidPreferences();
 #else
       DoSettings();
@@ -2728,7 +2749,7 @@ void MyFrame::OnToolLeftClick(wxCommandEvent &event) {
       //        If found, make the callback.
       //        TODO Modify this to allow multiple tools per plugin
       if (g_pi_manager) {
-        g_MainToolbar->HideTooltip();
+        HideTbarTooltip();
 
         ArrayOfPlugInToolbarTools tool_array =
             g_pi_manager->GetPluginToolbarToolArray();
@@ -2760,7 +2781,7 @@ void MyFrame::OnToolLeftClick(wxCommandEvent &event) {
 bool MyFrame::SetGlobalToolbarViz(bool viz) {
   bool viz_now = g_bmasterToolbarFull;
 
-  g_MainToolbar->HideTooltip();
+  HideTbarTooltip();
   wxString tip = _("Show Toolbar");
   if (viz) {
     tip = _("Hide Toolbar");
@@ -2866,6 +2887,7 @@ ChartCanvas *MyFrame::GetFocusCanvas() {
 }
 
 void MyFrame::OnToolbarAnimateTimer(wxTimerEvent &event) {
+  if (!g_MainToolbar) return;
   if (g_bmasterToolbarFull) {
 #ifndef OCPN_TOOLBAR_ANIMATE
     m_nMasterToolCountShown = (int)g_MainToolbar->GetToolCount();
@@ -4249,7 +4271,8 @@ void MyFrame::ProcessOptionsDialog(int rr, ArrayOfCDI *pNewDirArray) {
 
   // Change of master toolbar scale?
   bool b_masterScaleChange = false;
-  if (fabs(g_MainToolbar->GetScaleFactor() - g_toolbar_scalefactor) > 0.01f)
+  if (g_MainToolbar &&
+      (fabs(g_MainToolbar->GetScaleFactor() - g_toolbar_scalefactor) > 0.01f))
     b_masterScaleChange = true;
 
   if ((rr & TOOLBAR_CHANGED) || b_masterScaleChange)
@@ -6104,7 +6127,13 @@ void MyFrame::DoPrint(void) {
   auto &printer = PrintDialog::GetInstance();
   printer.Initialize(wxLANDSCAPE);
   printer.EnablePageNumbers(false);
+  // Disable/hide the tooltips during print because they can interfere with the
+  // print dialog
+  bool tooltips_were_enabled = DisableTbarTooltips();
   printer.Print(this, &printout);
+  if (tooltips_were_enabled) {
+    EnableTbarTooltips();
+  }
 
   // Pass two printout objects: for preview, and possible printing.
   /*
@@ -6814,7 +6843,7 @@ void MyFrame::RequestNewMasterToolbar(bool bforcenew) {
     }
   }
 
-  if (btbRebuild) {
+  if (btbRebuild && g_MainToolbar) {
     g_MainToolbar->SetAutoHide(g_bAutoHideToolbar);
     g_MainToolbar->SetAutoHideTimer(g_nAutoHideToolbar);
   }
